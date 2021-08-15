@@ -50,6 +50,10 @@ func match(c client.Interface) []Route {
 		routes = append(routes, NewProjectCreate(v))
 	}
 
+	if v, ok := c.(client.ProjectGetter); ok {
+		routes = append(routes, NewProjectGet(v))
+	}
+
 	if v, ok := c.(client.ResourceLister); ok {
 		routes = append(routes, NewResourceList(v))
 	}

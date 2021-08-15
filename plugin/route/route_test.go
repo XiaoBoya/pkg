@@ -108,6 +108,7 @@ func TestNewService(t *testing.T) {
 		&TestProjectCreate{},
 		&TestResourceList{},
 		&TestProjectListCreate{},
+		&TestProjectGet{},
 	}
 
 	g := NewGomegaWithT(t)
@@ -227,5 +228,16 @@ func (t *TestProjectListCreate) ListProjects(ctx context.Context, option metav1a
 }
 
 func (t *TestProjectListCreate) CreateProject(ctx context.Context, project *metav1alpha1.Project) (*metav1alpha1.Project, error) {
+	return &metav1alpha1.Project{}, nil
+}
+
+type TestProjectGet struct {
+}
+
+func (t *TestProjectGet) Path() string {
+	return "test-5"
+}
+
+func (t *TestProjectGet) GetProject(ctx context.Context, id string) (*metav1alpha1.Project, error) {
 	return &metav1alpha1.Project{}, nil
 }
