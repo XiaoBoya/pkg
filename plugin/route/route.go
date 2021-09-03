@@ -34,6 +34,11 @@ var DefaultFilters = []restful.FilterFunction{
 	client.MetaFilter,
 }
 
+// GetPluginWebPath returns a plugin
+func GetPluginWebPath(c client.Interface) string {
+	return fmt.Sprintf("/plugins/v1alpha1/%s", strings.TrimPrefix(c.Path(), "/"))
+}
+
 // Route a service should implement register func to register go restful webservice
 type Route interface {
 	Register(ws *restful.WebService)
@@ -78,6 +83,34 @@ func match(c client.Interface) []Route {
 		routes = append(routes, NewScanImage(v))
 	}
 
+	if v, ok := c.(client.GitRepoFileGetter); ok {
+		routes = append(routes, NewGitRepoFileGetter(v))
+	}
+
+	if v, ok := c.(client.GitRepoFileCreator); ok {
+		routes = append(routes, NewGitRepoFileCreator(v))
+	}
+
+	if v, ok := c.(client.GitBranchLister); ok {
+		routes = append(routes, NewGitBranchLister(v))
+	}
+
+	if v, ok := c.(client.GitBranchCreator); ok {
+		routes = append(routes, NewGitBranchCreator(v))
+	}
+
+	if v, ok := c.(client.GitCommitGetter); ok {
+		routes = append(routes, NewGitCommitGetter(v))
+	}
+
+	if v, ok := c.(client.GitPullRequestHandler); ok {
+		routes = append(routes, NewGitPullRequestLister(v))
+	}
+
+	if v, ok := c.(client.GitPullRequestCommentCreator); ok {
+		routes = append(routes, NewGitPullRequestNoteCreator(v))
+	}
+
 	return routes
 }
 
@@ -118,6 +151,27 @@ func GetMethods(c client.Interface) []string {
 	if _, ok := c.(client.WebhookReceiver); ok {
 		methods = append(methods, "ReceiveWebhook")
 	}
+	if _, ok := c.(client.GitRepoFileGetter); ok {
+		methods = append(methods, "GetGitRepoFile")
+	}
+	if _, ok := c.(client.GitRepoFileCreator); ok {
+		methods = append(methods, "CreateGitRepoFile")
+	}
+	if _, ok := c.(client.GitBranchLister); ok {
+		methods = append(methods, "ListGitBranch")
+	}
+	if _, ok := c.(client.GitBranchCreator); ok {
+		methods = append(methods, "CreateGitBranch")
+	}
+	if _, ok := c.(client.GitCommitGetter); ok {
+		methods = append(methods, "GetGitCommit")
+	}
+	if _, ok := c.(client.GitPullRequestHandler); ok {
+		methods = append(methods, "ListGitPullRequest", "GetGitPullRequest", "CreatePullRequest")
+	}
+	if _, ok := c.(client.GitPullRequestCommentCreator); ok {
+		methods = append(methods, "CreatePullRequestComment")
+	}
 	return methods
 }
 
@@ -129,8 +183,8 @@ func NewService(c client.Interface, filters ...restful.FilterFunction) (*restful
 	}
 
 	group := &restful.WebService{}
-	path := strings.TrimPrefix(c.Path(), "/")
-	group.Path("/" + path).Consumes(restful.MIME_JSON).Produces(restful.MIME_JSON)
+	// adds standard prefix for plugins
+	group.Path(GetPluginWebPath(c)).Consumes(restful.MIME_JSON).Produces(restful.MIME_JSON)
 
 	for _, filter := range filters {
 		group.Filter(filter)

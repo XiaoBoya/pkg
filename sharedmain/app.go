@@ -24,6 +24,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/emicklei/go-restful/v3"
 	"github.com/go-logr/zapr"
@@ -31,11 +32,13 @@ import (
 	kclient "github.com/katanomi/pkg/client"
 	klogging "github.com/katanomi/pkg/logging"
 	kmanager "github.com/katanomi/pkg/manager"
+	"github.com/katanomi/pkg/multicluster"
 	"github.com/katanomi/pkg/plugin/client"
 	"github.com/katanomi/pkg/plugin/component/tracing"
 	"github.com/katanomi/pkg/plugin/config"
 	"github.com/katanomi/pkg/plugin/route"
 	"github.com/katanomi/pkg/restclient"
+	kscheme "github.com/katanomi/pkg/scheme"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -109,10 +112,14 @@ func (a *AppBuilder) init() {
 		a.Context = ctrl.SetupSignalHandler()
 		a.Context, a.Config = GetConfigOrDie(a.Context)
 		a.Context, a.startInformers = injection.EnableInjectionOrDie(a.Context, a.Config)
+		a.Context = restclient.WithRESTClient(a.Context, resty.New().SetTimeout(time.Second*10))
+
 		a.ConfigMapWatcher = sharedmain.SetupConfigMapWatchOrDie(a.Context, a.Logger)
 		a.startFunc = append(a.startFunc, func(ctx context.Context) error {
 			return a.ConfigMapWatcher.Start(ctx.Done())
 		})
+
+		a.Context = multicluster.WithMultiCluster(a.Context, multicluster.NewClusterRegistryClientOrDie(a.Config))
 
 		a.container = restful.NewContainer()
 		a.Context, a.ClientManager = GetClientManager(a.Context)
@@ -124,6 +131,7 @@ func (a *AppBuilder) init() {
 func (a *AppBuilder) Scheme(scheme *runtime.Scheme) *AppBuilder {
 	a.init()
 	a.scheme = scheme
+	a.Context = kscheme.WithScheme(a.Context, scheme)
 	return a
 }
 
@@ -138,6 +146,7 @@ func (a *AppBuilder) initClient(clientVar ctrlclient.Client) {
 			a.startFunc = append(a.startFunc, func(ctx context.Context) error {
 				return cluster.Start(ctx)
 			})
+			a.Context = kclient.WithCluster(a.Context, cluster)
 		}
 		a.Context = kclient.WithClient(a.Context, clientVar)
 	})
@@ -191,6 +200,12 @@ func (a *AppBuilder) RESTClient(client *resty.Client) *AppBuilder {
 	return a
 }
 
+// MultiClusterClient injects a multi cluster client into the context
+func (a *AppBuilder) MultiClusterClient(client multicluster.Interface) *AppBuilder {
+	a.Context = multicluster.WithMultiCluster(a.Context, client)
+	return a
+}
+
 // Controllers adds controllers to the app, will start a manager under the hood
 func (a *AppBuilder) Controllers(ctors ...Controller) *AppBuilder {
 	a.init()
@@ -225,6 +240,8 @@ func (a *AppBuilder) Controllers(ctors ...Controller) *AppBuilder {
 	}
 
 	a.Context = kmanager.WithManager(a.Context, a.Manager)
+	// a manager implements all cluster.Cluster methods
+	a.Context = kclient.WithCluster(a.Context, a.Manager)
 	a.initClient(a.Manager.GetClient())
 
 	for _, controller := range ctors {
@@ -324,10 +341,15 @@ func (a *AppBuilder) Webservices(webServices ...WebService) *AppBuilder {
 
 // Plugins adds plugins to this app
 func (a *AppBuilder) Plugins(plugins ...client.Interface) *AppBuilder {
+	// will init a client if not already initiated
+	a.initClient(nil)
 	a.plugins = plugins
 	a.filters = append(a.filters, client.MetaFilter, client.AuthFilter)
 
 	for _, plugin := range a.plugins {
+		if err := plugin.Setup(a.Context, a.Logger); err != nil {
+			a.Logger.Fatalw("plugin could not be setup correctly", "err", err, "plugin", plugin.Path())
+		}
 		ws, err := route.NewService(plugin, a.filters...)
 		if err != nil {
 			a.Logger.Fatalw("plugin could not start correctly", "err", err, "plugin", plugin.Path())
@@ -363,11 +385,13 @@ func (a *AppBuilder) Profiling() *AppBuilder {
 func (a *AppBuilder) Run() error {
 
 	// adds a http server if there are any endpoints registered
-	if a.container != nil && len(a.container.RegisteredWebServices()) > 0 {
-		a.container.Add(route.NewDocService(a.container.RegisteredWebServices()...))
-
+	if a.container != nil {
 		// adds profiling and health checks
 		a.container.Add(route.NewDefaultService())
+
+		if len(a.container.RegisteredWebServices()) > 0 {
+			a.container.Add(route.NewDocService(a.container.RegisteredWebServices()...))
+		}
 
 		a.startFunc = append(a.startFunc, func(ctx context.Context) error {
 			// TODO: find a better way to get this configuration
