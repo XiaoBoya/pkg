@@ -90,7 +90,7 @@ func (a *gitRepoFileCreator) Register(ws *restful.WebService) {
 	projectParam := ws.PathParameter("project", "repository belong to project")
 	pathParam := ws.PathParameter("filepath", "file path")
 	ws.Route(
-		ws.POST("/projects/{project}/coderepositories/{repository}/content/{filepath}").To(a.CreateGitRepoFile).
+		ws.POST("/projects/{project}/coderepositories/{repository}/contents/{filepath}").To(a.CreateGitRepoFile).
 			Doc("CreateBranch").Param(projectParam).Param(repositoryParam).Param(pathParam).
 			Metadata(restfulspec.KeyOpenAPITags, a.tags).
 			Returns(http.StatusOK, "OK", metav1alpha1.GitCommit{}),
